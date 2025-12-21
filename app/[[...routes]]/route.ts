@@ -1,5 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+/**
+ * 统一的 CORS Headers 配置
+ */
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-host, x-cookie, x-method, x-status',
+};
+
+/**
+ * 处理 OPTIONS 预检请求
+ * 直接返回 200 和 CORS 头，不转发给目标服务器
+ */
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+/**
+ * 核心代理处理函数
+ */
 async function handleProxy(req: NextRequest) {
   try {
     // 1. 获取控制参数
@@ -7,27 +27,27 @@ async function handleProxy(req: NextRequest) {
     const targetCookie = req.headers.get('x-cookie');
     const method = req.headers.get('x-method') || req.method;
 
-    // 检查必填项
+    // 检查必填项 (如果缺失，依然要返回 CORS 头，否则前端拿不到报错信息)
     if (!targetHost) {
       return NextResponse.json(
         { error: 'Header [x-host] is missing.' },
-        { status: 200, headers: { 'x-status': '400' } }
+        { 
+          status: 200, 
+          headers: { 
+            'x-status': '400',
+            ...corsHeaders // 必须带上 CORS
+          } 
+        }
       );
     }
 
     // 2. 拼接完整的目标 URL
-    // 处理 x-host 格式 (确保有协议，且末尾无斜杠)
     if (!targetHost.startsWith('http')) {
       targetHost = `https://${targetHost}`;
     }
-    targetHost = targetHost.replace(/\/+$/, ''); // 移除末尾斜杠
+    targetHost = targetHost.replace(/\/+$/, '');
 
-    // 获取当前请求的路径和查询参数
-    // 例如请求: https://my-proxy.vercel.app/v1/chat?q=hello
-    // pathname: /v1/chat
-    // search: ?q=hello
     const { pathname, search } = req.nextUrl;
-    
     const targetUrl = `${targetHost}${pathname}${search}`;
 
     console.log(`[Proxy] ${method} -> ${targetUrl}`);
@@ -35,7 +55,6 @@ async function handleProxy(req: NextRequest) {
     // 3. 构建请求 Headers
     const requestHeaders = new Headers();
     req.headers.forEach((value, key) => {
-      // 过滤掉不需要的头
       if (
         key.toLowerCase() === 'host' || 
         key.toLowerCase().startsWith('x-') ||
@@ -50,7 +69,7 @@ async function handleProxy(req: NextRequest) {
       requestHeaders.set('Cookie', targetCookie);
     }
 
-    // 4. 处理 Body (GET/HEAD 无 Body)
+    // 4. 处理 Body
     const hasBody = !['GET', 'HEAD'].includes(method.toUpperCase());
     const body = hasBody ? await req.blob() : undefined;
 
@@ -59,7 +78,7 @@ async function handleProxy(req: NextRequest) {
       method: method,
       headers: requestHeaders,
       body: body,
-      redirect: 'manual', // 能够透传 3xx 状态码到 x-status
+      redirect: 'manual', 
     });
 
     // 6. 处理响应 Headers
@@ -68,11 +87,16 @@ async function handleProxy(req: NextRequest) {
     // 设置实际状态码到 x-status
     responseHeaders.set('x-status', response.status.toString());
     
+    // !!! 添加 CORS 允许头 !!!
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      responseHeaders.set(key, value);
+    });
+    
     // 清理可能导致 Vercel 报错的头
     responseHeaders.delete('content-encoding');
     responseHeaders.delete('content-length');
 
-    // 7. 返回结果 (始终 200)
+    // 7. 返回结果
     return new NextResponse(response.body, {
       status: 200,
       statusText: 'OK',
@@ -83,16 +107,21 @@ async function handleProxy(req: NextRequest) {
     console.error('Proxy Error:', error);
     return NextResponse.json(
       { error: 'Internal Proxy Error', details: error.message },
-      { status: 200, headers: { 'x-status': '500' } }
+      { 
+        status: 200, 
+        headers: { 
+          'x-status': '500',
+          ...corsHeaders // 错误响应也要带 CORS
+        } 
+      }
     );
   }
 }
 
-// 捕获所有 HTTP 方法
+// 导出处理方法 (OPTIONS 单独处理了)
 export const GET = handleProxy;
 export const POST = handleProxy;
 export const PUT = handleProxy;
 export const PATCH = handleProxy;
 export const DELETE = handleProxy;
 export const HEAD = handleProxy;
-export const OPTIONS = handleProxy;
