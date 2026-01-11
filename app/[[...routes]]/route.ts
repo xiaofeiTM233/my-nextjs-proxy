@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from 'next/server';
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': '*',
-  'Access-Control-Allow-Headers': '*', // 为了简化，允许所有请求头
+  'Access-Control-Allow-Headers': '*',
+  'Access-Control-Expose-Headers': '*'
 };
 
 // 2. 处理 OPTIONS 预检请求
